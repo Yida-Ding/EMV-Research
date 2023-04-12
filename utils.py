@@ -1,15 +1,17 @@
+from collections import defaultdict
+from itertools import groupby
 import json
 import numpy as np
-from collections import defaultdict
+
 
 class Dataset(object):
     """
     Config Parameters:
+        EMV_initial_state: (i, l, v) for each EMV @ t=0
+        OV_initial_state: (i, l, v) for each OV @ t=0
         T(s, 15), I(# cells in a lane), L(# lanes), M(# EMV), N(# OV), V(cell/s)
         A(m,len), B(m,wid), a+/a-(cell/s^2)
         weight: [1, 1, 1]
-        EMV_initial_state: (i, l, v) for each EMV @ t=0
-        OV_initial_state: (i, l, v) for each OV @ t=0
     """
     def __init__(self, dataset):
         self.dataset = dataset
@@ -91,8 +93,41 @@ class Dataset(object):
         return sum_of_changes, emv_change, ov_change
 
 
-if __name__ == "__main__":
-    dt = Dataset("emv_case1")
-    emv_exact_traj, ov_exact_traj = dt.get_exact_trajectories()
-    res = dt.get_exact_changes(emv_exact_traj, ov_exact_traj)
+class ConflictHelper(Dataset):
+    """
+    Resolving conflicts caused among EMVs and OVs
+    """
+    def __init__(self, dataset):
+        super().__init__(dataset)
 
+    def prepare_state_with_conflict(self, emv_state, ov_state):
+        """
+        Parameters:
+            emv_state: {m: (i, l, v)}
+            ov_state: {n: (i, l, v)}
+        Return:
+            color_mat: 2-d array, 0-empty-white, 1-ov-black, 2-emv-red, 3-cfl-orange
+            text_lst: [(x, y, text)]
+                Note: EMVs are renamed as alphabetic letters
+        """
+        color_mat = np.zeros((self.config["I"], self.config["L"]))
+        loc2cars = defaultdict(list)
+        
+        for m, (i, l, _) in emv_state.items():
+            m_str = chr(96 + m) 
+            loc2cars[i, l].append(m_str)
+            if color_mat[-i, -l] == 0:
+                color_mat[-i, -l] = 2
+            elif color_mat[-i, -l] == 2:
+                color_mat[-i, -l] = 3
+
+        for n, (i, l, _) in ov_state.items():
+            n_str = str(n)
+            loc2cars[i, l].append(n_str)
+            if color_mat[-i, -l] == 0:
+                color_mat[-i, -l] = 1
+            elif color_mat[-i, -l] in [1, 2]:
+                color_mat[-i, -l] = 3
+
+        text_lst = [(i, l, "/".join(cars)) for (i, l), cars in loc2cars.items()]
+        return color_mat, text_lst
